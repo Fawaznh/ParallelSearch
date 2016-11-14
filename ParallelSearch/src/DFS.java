@@ -17,101 +17,96 @@ public class DFS extends Thread
 {
     private Stack stack = new Stack();
     private Set<Integer> visited = new HashSet<>();
-    public static ConcurrentMap<Integer, Integer> path = new ConcurrentHashMap<>(); //shared
+    public static ConcurrentMap<Integer, Integer> path = new ConcurrentHashMap<>();
+    private ConcurrentLinkedDeque<DFS> workers = new ConcurrentLinkedDeque<>();
 
-    //HashMap<Integer, Integer> path = new HashMap<>();
+    public int maxThreads;
     
-    
+
     private Graph g;
     private Integer s; // start node
-    private boolean isFound = false;
+    private static boolean isFound = false;
     
     // Thread related
     private boolean idle = true;
-    private boolean terminate = false;
-    private boolean workRequested = false;
-    private boolean workAccepted = false;
-    private DFS recipient;
 
+    
+    private static long startTime;
     
     public DFS(Graph g,Integer s)
     {
-        this.g = g; 
-        this.s = s;  
         super.start();
+        
+        this.g = g; 
+        this.s = s;   
+
+        
+        maxThreads = Runtime.getRuntime().availableProcessors();
+       // idleCount = maxThreads;
+        
+        startTime = System.currentTimeMillis();
+        this.activate();
+        
+        for(int i=0; i < maxThreads-1;i++)
+        {
+            DFS dfs = new DFS(g);
+            workers.add(dfs);
+        } 
+        
+        
     }
+    
     
     public DFS(Graph g)
     {
-        this.g = g; 
         super.start();
+        this.g = g;  
     }
     
     
 
     public void run()
     {
-        while(terminate == false)
+        while(true)
         {
-            // start in idle state then look for work
-            if(idle)
+            if(idle == false)
             {
-              
-                int idleCount = 0;   
-                List<DFS> synList = Collections.synchronizedList(new ArrayList<DFS>(ParallelSearch.dfsThreads));
-                int listSize = synList.size();
-                for(DFS t: synList)
-                {
-                    if(!t.isIdle())
-                    {
-                        if(t.requestWork(this) && !workAccepted)
-                        {
-                            threadLog("requesting work from t"+t.getThreadId());
-                            workAccepted = true;
-                            break;
-                        }      
-                    }
-                    else
-                    {
-                        idleCount++;
-                    }
-
-                }
-                // terminate if all threads are idle( or ran out of work)
-                if(idleCount == listSize) 
-                {
-                    this.terminate();
-                }
-                        
-                
-                continue; // skip in idle state
+                work();
             }
-            
-     
-            
-            // only push if its the first thread
+        }       
+    }
+    
+    private void work()
+    {
+        
+        // only push if its the first thread
             if(stack.isEmpty())   
                 stack.push(s);
             
-            
-            while (!stack.isEmpty() && !isFound) 
+            while (!stack.isEmpty()) 
             {
-                threadLog("DFS");
-                printStack();
-
                 
-
                 s = (Integer)stack.pop();
 
-                threadLog("pop() " + s);
                 if (s.equals(g.getGoal())) 
                 {
+                    System.out.println(startTime);
                     threadLog("==== FOUND GOAL ====");
                     g.setPath(generatePath());
                     threadLog("path: " + g.toString());
                     threadLog("====================");
                     
-                    isFound = true;
+                    long time = System.currentTimeMillis();
+                    System.out.println(time);
+                    System.out.println(time - startTime);
+                    
+                    System.exit(0);
+
+                }
+                
+                if(!workers.isEmpty() && stack.size()>2  )
+                {
+                    sendWork();
                 }
 
                 if (!visited.contains(s)) 
@@ -131,36 +126,13 @@ public class DFS extends Thread
                 }
                 
                 
-                if(workRequested)
-                {
-                    workRequested = false;
 
-                        threadLog("work assigned to t"+recipient.getId());
-                        Stack halfStack = splitStack();
-                        
-                        if(!halfStack.isEmpty())
-                        {
-                            recipient.setStack(halfStack);
-                            recipient.setStart((Integer)halfStack.peek());
-                            recipient.activate();  
-                        }
-                }
-                
-                
-                try {
-                    sleep(1);
-                } catch (InterruptedException ex) {
-                    Logger.getLogger(DFS.class.getName()).log(Level.SEVERE, null, ex);
-                }
             }
             
             // no more work? set to idle
-            idle = true;
-            workAccepted = false;
-            
-            threadLog("thread set to idle!");
-            
-        }
+            setIdel();
+            workers.add(this);
+
     }
     
     private void printStack()
@@ -169,21 +141,23 @@ public class DFS extends Thread
         for(Object edge:stack.toArray())
         {
             ss += edge +",";
-            
         }
-        threadLog("stack: "+ss);
+        //threadLog("stack: "+ss);
     }
     
+    
+     
     private void threadLog(String log)
     {
         System.out.println("t"+Thread.currentThread().getId()+": "+log);
         
     }
-    public void terminate()
+    public synchronized void terminate()
     {
         threadLog("terminating thread!");
-        terminate = true;
+        System.exit(0);
     }
+
     
     public List<Integer> generatePath()
     {
@@ -191,67 +165,56 @@ public class DFS extends Thread
         List<Integer> list = new ArrayList<>();
         
         // add it to first of list since its in reverse order
+        list.add(0, g.getGoal()); 
         while(tmp1 != null)
         {
             list.add(0, tmp1); 
             tmp1 = path.get(tmp1);
         }
+        
 
        return list;
     }
     
     // split and remove
-    private  Stack splitStack()
+    private  synchronized Stack splitStack()
     {
         Stack tmpstack = new Stack();
-
-        
-        int n = stack.size() / 2;
-        List<Integer> list = new ArrayList<>(stack.subList(n, stack.size()));
-        
-        tmpstack.addAll(list);
-        // remove the half we give to other thread
-        stack.removeAll(list); 
-        
+        int n = stack.size()/2;
+        for(int i =0;i<n;i++)
+        {
+            tmpstack.push(stack.pop());
+        }
         return tmpstack;
     }
-    public synchronized boolean requestWork(DFS dfs)
+    
+
+    public synchronized void sendWork()
     {
-        //reject if there is only one node in the stack
-        if(stack.size() <=1 || this.idle) return false;
-        
-        workRequested = true;
-        recipient = dfs;
-        
-        return true;
+        DFS dfsWorker = workers.pollLast();
+        if(dfsWorker.idle)
+        {
+            Stack halfStack = splitStack();
+            if(!halfStack.isEmpty())
+            {
+                dfsWorker.setStack(halfStack);
+                dfsWorker.setStart((Integer)halfStack.peek());
+                dfsWorker.activate();  
+            }
+        }
+
     }
-    public void setStart(Integer s)
+    public  void setStart(Integer s)
     {
         this.s = s;
     }
     
-    public void setStack(Stack stack)
+    public  void setStack(Stack stack)
     {
         this.stack = stack;
     }
     
-    public void setStack2(Stack stack)
-    {
-        
-        //split the stack then add it
-        int size = stack.size();
-        int n = size / 2;
-       
-        List<Integer> list = new ArrayList<>(stack.subList(n, size));
-
-        this.stack.addAll(list);
-        
-       
-        setStart((Integer)this.stack.peek());
-
-    }
-    
-    public void setCurrentPath(ConcurrentMap<Integer, Integer> path)
+    public  void setCurrentPath(ConcurrentMap<Integer, Integer> path)
     {
         this.path = path;
     }
@@ -259,23 +222,19 @@ public class DFS extends Thread
     {
         return isFound;
     }
-    public void activate()
+    public synchronized void activate()
     {
         idle = false;
     }
+    public synchronized void setIdel()
+    {
+        idle = true;
+    }
     
-    public long getThreadId()
+    public synchronized long getThreadId()
     {
         return this.getId();
     }
-    
-    public boolean isIdle()
-    {
-        return this.idle;
-    }
-    public DFS getRecipient()
-    {
-        return recipient;
-    }
+
 
 }
