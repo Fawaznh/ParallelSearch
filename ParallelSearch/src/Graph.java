@@ -55,6 +55,14 @@ public class Graph
     {
         pathFound = path;
     }
+    public void generateTree(int max)
+    {
+        for(int i= 0;i < max;i++)
+        {
+           addEdge(i, (i*2)+1);
+           addEdge(i, (i*2)+2);
+        }
+    }
     
     public String toString()
     {
