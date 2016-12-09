@@ -63,7 +63,7 @@ public class ParallelSearchV2
             synchronized(LOCK)
             {
                 DFSV2.begin(g, workers, threadCount, LOCK);
-                while(!done)
+                while(workers.size() != threadCount)
                     LOCK.wait();
             }            
         }
