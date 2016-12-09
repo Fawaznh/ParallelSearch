@@ -50,6 +50,7 @@ public class ParallelSearchV2
         Graph g = new BalancedTree(13, 0, 3).getGraph();            
         long test = ParallelSearchV2.begin(g);
         System.out.println("Goal found in " + test + "ms");
+        System.exit(0);
     }
     
     public static boolean isDone()
